@@ -18,7 +18,7 @@ fn main() -> Result<(), Error> {
             Arg::with_name("v")
                 .short("v")
                 .multiple(true)
-                .help("Verbosity, add more for more verbose output."),
+                .help("Sets the verbosity level"),
         )
         .arg(
             Arg::with_name("proxy")
