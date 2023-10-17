@@ -19,6 +19,10 @@ fn main() -> Result<(), Error> {
                 .short("v")
                 .multiple(true)
                 .help("Verbosity, add more for more verbose output."),
+        .arg(
+            Arg::with_name("proxy")
+                .long("proxy")
+                .help("Enables PROXY protocol when running in ws_to_tcp mode"),
         )
         .arg(
             Arg::with_name("mode")
@@ -81,14 +85,23 @@ fn main() -> Result<(), Error> {
 
     let rt = tokio::runtime::Runtime::new().unwrap();
 
+    let proxy = matches.is_present("proxy");
     let direction = match matches
         .value_of("mode")
         .ok_or(clap::Error::with_description(
             "Couldn't find mode value.",
             clap::ErrorKind::EmptyValue,
         ))? {
-        "ws_to_tcp" => common::Direction::WsToTcp,
-        "tcp_to_ws" => common::Direction::TcpToWs,
+        "ws_to_tcp" => common::Direction::WsToTcp(proxy),
+        "tcp_to_ws" => {
+            if proxy {
+                return Err(Box::new(clap::Error::with_description(
+                    "proxy is not allowed in tcp_to_ws mode",
+                    clap::ErrorKind::ArgumentConflict,
+                )));
+            }
+            common::Direction::TcpToWs
+        }
         &_ => {
             panic!("Got unknown direction, shouldn't be possible.");
         }
