@@ -1,4 +1,4 @@
-use clap::{App, Arg};
+use clap::{Arg, Command};
 
 use tokio;
 
@@ -12,57 +12,43 @@ mod common;
 // helpful example; https://github.com/snapview/tokio-tungstenite/issues/137
 
 fn main() -> Result<(), Error> {
-    let app = App::new("Websocket Bridge")
-        .about("Allows bridging a TCP connection over a websocket.")
-        .arg(
-            Arg::with_name("v")
-                .short("v")
-                .multiple(true)
-                .help("Increases the verbosity"),
-        )
-        .arg(
-            Arg::with_name("proxy")
-                .long("proxy")
-                .help("Enables PROXY protocol when running in ws_to_tcp mode"),
-        )
-        .arg(
-            Arg::with_name("mode")
-                .possible_value("ws_to_tcp")
-                .possible_value("tcp_to_ws")
-                .takes_value(true)
-                .required(true)
-                .help("The direction of transfer."),
-        )
-        .arg(
-            Arg::with_name("bind")
-                .takes_value(true)
-                .required(true)
-                .help("ip:port to bind to."),
-        )
-        .arg(
-            Arg::with_name("dest")
-                .takes_value(true)
-                .required(true)
-                .help(
-                    "ip:port to send to (for websockets; ip:port, [ws[s]://]example.com/sub/path)",
-                ),
-        );
+    let cmd =
+        Command::new("Websocket Bridge")
+            .about("Allows bridging a TCP connection over a websocket.")
+            .arg(
+                Arg::new("v")
+                    .short('v')
+                    .action(clap::ArgAction::Count)
+                    .value_parser(clap::value_parser!(u8).range(0..5))
+                    .help("Increases the verbosity"),
+            )
+            .arg(
+                Arg::new("proxy")
+                    .long("proxy")
+                    .action(clap::ArgAction::SetTrue)
+                    .help("Enables PROXY protocol when running in ws_to_tcp mode"),
+            )
+            .arg(
+                Arg::new("mode")
+                    .value_parser(["ws_to_tcp", "tcp_to_ws"])
+                    .required(true)
+                    .help("The direction of transfer."),
+            )
+            .arg(Arg::new("bind").required(true).help("ip:port to bind to."))
+            .arg(Arg::new("dest").required(true).help(
+                "ip:port to send to (for websockets; ip:port, [ws[s]://]example.com/sub/path)",
+            ));
 
-    let matches = app.clone().get_matches();
+    let matches = cmd.clone().get_matches();
 
-    let verbosity = matches.occurrences_of("v");
+    let verbosity = matches.get_count("v");
     let level = match verbosity {
         0 => LevelFilter::Error,
         1 => LevelFilter::Warn,
         2 => LevelFilter::Info,
         3 => LevelFilter::Debug,
         4 => LevelFilter::Trace,
-        _ => {
-            return Err(Box::new(clap::Error::with_description(
-                "Couldn't find dest value.",
-                clap::ErrorKind::EmptyValue,
-            )));
-        }
+        _ => panic!("`v` must be in range 0..5"),
     };
 
     let _stylish_logger = Builder::new()
@@ -71,28 +57,21 @@ fn main() -> Result<(), Error> {
         .init();
 
     let bind_value = matches
-        .value_of("bind")
-        .ok_or(clap::Error::with_description(
-            "Couldn't find bind value.",
-            clap::ErrorKind::EmptyValue,
-        ))?;
+        .get_one::<String>("bind")
+        .expect("`bind` is required");
 
     let dest_value = matches
-        .value_of("dest")
-        .ok_or(clap::Error::with_description(
-            "Couldn't find dest value.",
-            clap::ErrorKind::EmptyValue,
-        ))?;
+        .get_one::<String>("dest")
+        .expect("`dest` is required");
 
     let rt = tokio::runtime::Runtime::new().unwrap();
 
-    let proxy = matches.is_present("proxy");
+    let proxy = matches.get_flag("proxy");
     let direction = match matches
-        .value_of("mode")
-        .ok_or(clap::Error::with_description(
-            "Couldn't find mode value.",
-            clap::ErrorKind::EmptyValue,
-        ))? {
+        .get_one::<String>("mode")
+        .expect("`mode` is required")
+        .as_str()
+    {
         "ws_to_tcp" => common::Direction::WsToTcp,
         "tcp_to_ws" => common::Direction::TcpToWs,
         &_ => {
