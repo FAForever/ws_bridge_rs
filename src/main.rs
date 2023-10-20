@@ -93,23 +93,15 @@ fn main() -> Result<(), Error> {
             "Couldn't find mode value.",
             clap::ErrorKind::EmptyValue,
         ))? {
-        "ws_to_tcp" => common::Direction::WsToTcp(proxy),
-        "tcp_to_ws" => {
-            if proxy {
-                return Err(Box::new(clap::Error::with_description(
-                    "proxy is not allowed in tcp_to_ws mode",
-                    clap::ErrorKind::ArgumentConflict,
-                )));
-            }
-            common::Direction::TcpToWs
-        }
+        "ws_to_tcp" => common::Direction::WsToTcp,
+        "tcp_to_ws" => common::Direction::TcpToWs,
         &_ => {
             panic!("Got unknown direction, shouldn't be possible.");
         }
     };
 
     rt.block_on(async {
-        let res = common::serve(bind_value, dest_value, direction).await;
+        let res = common::serve(bind_value, dest_value, direction, proxy).await;
         panic!("Serve returned with {:?}", res);
     });
 

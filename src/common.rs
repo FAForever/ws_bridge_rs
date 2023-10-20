@@ -2,47 +2,55 @@ use futures_util::StreamExt;
 use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 
+use std::net::{IpAddr, SocketAddr};
 use tokio_tungstenite::tungstenite;
-use tokio_tungstenite::{accept_async, connect_async, tungstenite::protocol::Message};
+use tokio_tungstenite::{accept_hdr_async, connect_async, tungstenite::protocol::Message};
+use tungstenite::http::Request;
 type Error = Box<dyn std::error::Error>;
 use crate::tokio::io::AsyncWriteExt;
 use futures_util::SinkExt;
 use log::{debug, error, info, trace, warn};
 
+#[derive(Debug)]
 pub enum TcpOrDestination {
     Tcp(TcpStream),
-    Dest(String, bool),
+    Dest(String),
 }
 
-pub async fn communicate(tcp_in: TcpOrDestination, ws_in: TcpOrDestination) -> Result<(), Error> {
+pub async fn communicate(
+    tcp_in: TcpOrDestination,
+    ws_in: TcpOrDestination,
+    proxy: bool,
+) -> Result<(), Error> {
     let mut ws;
     let mut tcp;
 
-    match tcp_in {
-        TcpOrDestination::Tcp(src_stream) => {
-            // Convert the source stream into a websocket connection.
-            ws = accept_async(tokio_tungstenite::MaybeTlsStream::Plain(src_stream)).await?;
-        }
-        TcpOrDestination::Dest(dest_location, _) => {
-            let (wsz, _) = match connect_async(dest_location).await {
-                Ok(v) => v,
-                Err(e) => {
-                    warn!("Something went wrong connecting {:?}", e);
-                    if let TcpOrDestination::Tcp(mut v) = ws_in {
-                        v.shutdown().await?;
-                    }
-                    return Err(Box::new(e));
-                }
-            };
-            ws = wsz;
-        }
-    }
+    match (tcp_in, ws_in) {
+        (TcpOrDestination::Tcp(src_stream), TcpOrDestination::Dest(dest_location)) => {
+            let mut src_addr = src_stream.peer_addr()?;
+            let dst_addr = src_stream.local_addr()?;
 
-    match ws_in {
-        TcpOrDestination::Tcp(v) => {
-            tcp = v;
-        }
-        TcpOrDestination::Dest(dest_location, proxy) => {
+            let mut forward_addr = Option::None;
+            // Convert the source stream into a websocket connection.
+            ws = accept_hdr_async(
+                tokio_tungstenite::MaybeTlsStream::Plain(src_stream),
+                |request: &Request<()>, response| {
+                    forward_addr = request
+                        .headers()
+                        .get("X-Forwarded-For")
+                        .and_then(|h| h.to_str().ok())
+                        .and_then(|h| h.split(',').next())
+                        .and_then(|addr| addr.trim().parse::<IpAddr>().ok());
+
+                    Ok(response)
+                },
+            )
+            .await?;
+
+            if let Some(addr) = forward_addr {
+                src_addr = SocketAddr::new(addr, 0);
+            }
+
             // Try to setup the tcp stream we'll be communicating to, if this fails, we close the websocket.
             tcp = match TcpStream::connect(dest_location).await {
                 Ok(e) => e,
@@ -65,12 +73,6 @@ pub async fn communicate(tcp_in: TcpOrDestination, ws_in: TcpOrDestination) -> R
             };
 
             if proxy {
-                let (src_addr, dst_addr) = match ws.get_ref() {
-                    tokio_tungstenite::MaybeTlsStream::Plain(s) => {
-                        (s.peer_addr()?, s.local_addr()?)
-                    }
-                    _ => return Err(Error::from("unknown tls implementation")),
-                };
                 let proxy_header = ppp::v2::Builder::with_addresses(
                     ppp::v2::Version::Two | ppp::v2::Command::Proxy,
                     ppp::v2::Protocol::Stream,
@@ -81,6 +83,25 @@ pub async fn communicate(tcp_in: TcpOrDestination, ws_in: TcpOrDestination) -> R
                 tcp.write(proxy_header.as_slice()).await?;
             }
         }
+        (TcpOrDestination::Dest(dest_location), TcpOrDestination::Tcp(src_stream)) => {
+            tcp = src_stream;
+
+            // TODO: Implement adding the proxy headers to the request.
+            // Currently not needed for FAF.
+            let (wsz, _) = match connect_async(dest_location).await {
+                Ok(v) => v,
+                Err(e) => {
+                    warn!("Something went wrong connecting {:?}", e);
+                    tcp.shutdown().await?;
+                    return Err(Box::new(e));
+                }
+            };
+            ws = wsz;
+        }
+        (tcp_in, ws_in) => panic!(
+            "Invalid arguments supplied to communicate: tcp_in={:?} ws_in={:?}",
+            tcp_in, ws_in
+        ),
     }
 
     // We got the tcp connection setup, split both streams in their read and write parts
@@ -118,6 +139,9 @@ pub async fn communicate(tcp_in: TcpOrDestination, ws_in: TcpOrDestination) -> R
                                 break;
                             }
                         }
+                        Message::Ping(m) => {
+                            trace!("Received ping {:?}", m);
+                        },
                         Message::Close(m) => {
                             trace!("Encountered close message {:?}", m);
                             // dest_write.shutdown().await?;
@@ -252,11 +276,16 @@ pub async fn communicate(tcp_in: TcpOrDestination, ws_in: TcpOrDestination) -> R
 }
 
 pub enum Direction {
-    WsToTcp(bool),
+    WsToTcp,
     TcpToWs,
 }
 
-pub async fn serve(bind_location: &str, dest_location: &str, dir: Direction) -> Result<(), Error> {
+pub async fn serve(
+    bind_location: &str,
+    dest_location: &str,
+    dir: Direction,
+    proxy: bool,
+) -> Result<(), Error> {
     let listener = TcpListener::bind(bind_location)
         .await
         .expect("Could not bind to port");
@@ -264,7 +293,7 @@ pub async fn serve(bind_location: &str, dest_location: &str, dir: Direction) -> 
 
     loop {
         let in1 = match dir {
-            Direction::WsToTcp(_) => {
+            Direction::WsToTcp => {
                 let (socket, _) = listener
                     .accept()
                     .await
@@ -282,11 +311,11 @@ pub async fn serve(bind_location: &str, dest_location: &str, dir: Direction) -> 
                 } else {
                     ""
                 };
-                TcpOrDestination::Dest(proto_addition.to_owned() + dest_location, false)
+                TcpOrDestination::Dest(proto_addition.to_owned() + dest_location)
             }
         };
         let in2 = match dir {
-            Direction::WsToTcp(proxy) => TcpOrDestination::Dest(dest_location.to_owned(), proxy),
+            Direction::WsToTcp => TcpOrDestination::Dest(dest_location.to_owned()),
             Direction::TcpToWs => {
                 let (socket, _) = listener
                     .accept()
@@ -299,7 +328,7 @@ pub async fn serve(bind_location: &str, dest_location: &str, dir: Direction) -> 
                 TcpOrDestination::Tcp(socket)
             }
         };
-        match communicate(in1, in2).await {
+        match communicate(in1, in2, proxy).await {
             Ok(_v) => {
                 info!("Succesfully setup communication.");
             }
