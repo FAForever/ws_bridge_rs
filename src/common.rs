@@ -21,6 +21,7 @@ pub async fn communicate(
     tcp_in: TcpOrDestination,
     ws_in: TcpOrDestination,
     proxy: bool,
+    proxy_header_name: &str,
 ) -> Result<(), Error> {
     let mut ws;
     let mut tcp;
@@ -37,7 +38,7 @@ pub async fn communicate(
                 |request: &Request<()>, response| {
                     forward_addr = request
                         .headers()
-                        .get("X-Forwarded-For")
+                        .get(proxy_header_name)
                         .and_then(|h| h.to_str().ok())
                         .and_then(|h| h.split(',').next())
                         .and_then(|addr| addr.trim().parse::<IpAddr>().ok());
@@ -285,6 +286,7 @@ pub async fn serve(
     dest_location: &str,
     dir: Direction,
     proxy: bool,
+    proxy_header_name: &str,
 ) -> Result<(), Error> {
     let listener = TcpListener::bind(bind_location)
         .await
@@ -328,7 +330,7 @@ pub async fn serve(
                 TcpOrDestination::Tcp(socket)
             }
         };
-        match communicate(in1, in2, proxy).await {
+        match communicate(in1, in2, proxy, proxy_header_name).await {
             Ok(_v) => {
                 info!("Succesfully setup communication.");
             }
