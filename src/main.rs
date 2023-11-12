@@ -29,6 +29,13 @@ fn main() -> Result<(), Error> {
                     .help("Enables PROXY protocol when running in ws_to_tcp mode"),
             )
             .arg(
+                Arg::new("proxy-header-name")
+                    .long("proxy-header-name")
+                    .default_value("X-Forwarded-For")
+                    .requires("proxy")
+                    .help("Get the original IP from this header when running in PROXY mode"),
+            )
+            .arg(
                 Arg::new("mode")
                     .value_parser(["ws_to_tcp", "tcp_to_ws"])
                     .required(true)
@@ -67,6 +74,7 @@ fn main() -> Result<(), Error> {
     let rt = tokio::runtime::Runtime::new().unwrap();
 
     let proxy = matches.get_flag("proxy");
+    let proxy_header_name = matches.get_one::<String>("proxy-header-name").unwrap();
     let direction = match matches
         .get_one::<String>("mode")
         .expect("`mode` is required")
@@ -80,7 +88,7 @@ fn main() -> Result<(), Error> {
     };
 
     rt.block_on(async {
-        let res = common::serve(bind_value, dest_value, direction, proxy).await;
+        let res = common::serve(bind_value, dest_value, direction, proxy, proxy_header_name).await;
         panic!("Serve returned with {:?}", res);
     });
 
