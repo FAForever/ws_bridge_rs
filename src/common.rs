@@ -128,7 +128,6 @@ pub async fn communicate(
                         Ok(v) => v,
                         Err(p) => {
                             debug!("Err reading data {:?}", p);
-                            // dest_write.shutdown().await?;
                             break;
                         }
                     };
@@ -148,12 +147,11 @@ pub async fn communicate(
                         },
                         Message::Close(m) => {
                             trace!("Encountered close message {:?}", m);
-                            // dest_write.shutdown().await?;
-                            // need to somehow shut down the tcp socket here as well.
+                            // After receiving a close, the stream will end on its own by hitting
+                            // the message.is_none() condition above.
                         }
                         other => {
                             error!("Something unhandled on the websocket: {:?}", other);
-                            // dest_write.shutdown().await?;
                         }
                     }
                 },
