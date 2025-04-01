@@ -218,7 +218,13 @@ pub async fn communicate(
 
         // Send the websocket close message.
         if need_close {
-            if let Err(v) = write.send(Message::Close(None)).await {
+            let msg = tungstenite::protocol::frame::CloseFrame {
+                reason: tungstenite::protocol::frame::Utf8Bytes::from_static(
+                    "TCP connection closed.",
+                ),
+                code: tungstenite::protocol::frame::coding::CloseCode::Normal,
+            };
+            if let Err(v) = write.send(Message::Close(Some(msg))).await {
                 error!("Failed to send close message to websocket: {:?}", v);
             }
         }
