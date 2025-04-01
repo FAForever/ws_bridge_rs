@@ -4,6 +4,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 use std::net::{IpAddr, SocketAddr};
 use tokio_tungstenite::tungstenite;
+use tokio_tungstenite::tungstenite::Bytes;
 use tokio_tungstenite::{accept_hdr_async, connect_async, tungstenite::protocol::Message};
 use tungstenite::http::Request;
 type Error = Box<dyn std::error::Error>;
@@ -57,7 +58,9 @@ pub async fn communicate(
                 Ok(e) => e,
                 Err(v) => {
                     let msg = tungstenite::protocol::frame::CloseFrame {
-                        reason: std::borrow::Cow::Borrowed("Could not connect to destination."),
+                        reason: tungstenite::protocol::frame::Utf8Bytes::from_static(
+                            "Could not connect to destination.",
+                        ),
                         code: tungstenite::protocol::frame::coding::CloseCode::Error,
                     };
 
@@ -184,7 +187,7 @@ pub async fn communicate(
                         }
                         Ok(n) => {
                             let res = buf[..n].to_vec();
-                            match write.send(Message::Binary(res)).await {
+                            match write.send(Message::Binary(Bytes::from(res))).await {
                                 Ok(_) => {
                                     continue;
                                 }
