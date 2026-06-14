@@ -1,3 +1,5 @@
+**UNMAINTAINED.** This application was used in our rushed migration from raw TCP to websockets to use HTTP rate limiting in order to mitigate DDoS. Thanks to tools like Claude, a migration to nativr websocket support in the affected apps is easier than ever. This is what we did in https://github.com/FAForever/server/pull/1093, therefore we have no need to maintain this application anymore.
+
 ws_bridge_rs
 ============
 
